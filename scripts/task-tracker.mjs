@@ -92,8 +92,6 @@ const app = {
     },
     async loadplayer() {
       this.player = JSON.parse(localStorage.getItem('player') || '{ "name": "Player 1", "experience": 0, "coins": 0 }')
-      // TODO: Avatar-Bild änderbar machen
-      // this.player.pictureurl = user.photoURL; // Bild als Avatar anzeigen
     },
     async loadtasks() {
       this.tasks = JSON.parse(localStorage.getItem('tasks') || '[]')
