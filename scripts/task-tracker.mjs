@@ -1,11 +1,3 @@
-// Firebase SDK Funktionen
-// Verfügbare Firebase Libs: https://firebase.google.com/docs/web/learn-more#available-libraries
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/9.6.8/firebase-app.js';
-// Firebase Authentifizierung
-import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, signOut } from 'https://www.gstatic.com/firebasejs/9.6.8/firebase-auth.js';
-// Firestore Datenbank
-import { getFirestore, collection, query, onSnapshot, doc, getDoc, setDoc, deleteDoc, updateDoc } from 'https://www.gstatic.com/firebasejs/9.6.8/firebase-firestore.js';
-
 import DetailDialog from './components/vue/detail-dialog.mjs';
 import FilterButton from './components/vue/filter-button.mjs';
 import LabelledInput from './components/vue/labelled-input.mjs';
@@ -13,11 +5,6 @@ import LabelledSelect from './components/vue/labelled-select.mjs';
 import PlayerWidget from './components/vue/player-widget.mjs';
 import Task from './components/vue/task.mjs';
 import experiencehelper from './utils/experiencehelper.mjs';
-
-// Firebase Konfiguration
-import firebaseConfig from './config/firebase-web.mjs';
-import localFirebaseConfig from './config/firebase-local.mjs';
-const firebaseConfigToUse = localFirebaseConfig ?? firebaseConfig; // Wenn lokale API Settings vorhanden sind, sollen diese anstelle der öffentlichen Schlüssel verwendet werden
 
 const app = {
   components: {
@@ -30,7 +17,6 @@ const app = {
   },
   data() {
     return {
-      firebaseapp: undefined,
       finishedloading: false,
       loaded: false,
       marked: window.marked,
@@ -39,7 +25,6 @@ const app = {
       player: undefined,
       taskidtoselect: undefined,
       tasks: [],
-      googleAuthProvider: undefined,
       taskcategories: [
         { label: "Rot", value: "rot", color: '#ff3b30' },
         { label: "Gelb", value: "gelb", color: '#ffcc00' },
@@ -53,12 +38,11 @@ const app = {
       ],
     }
   },
-  mounted() {
-    // Sobald Vue fertig initialisiert ist, soll die Verbindung zu Firebase initialisiert werden
-    // App initialisieren und starten, liefert app-Objekt zurück, siehe https://firebase.google.com/docs/reference/node/firebase.app.App
-    this.firebaseapp = initializeApp(firebaseConfigToUse);
-    this.googleAuthProvider = new GoogleAuthProvider();
-    onAuthStateChanged(getAuth(), this.handleauthstatechange.bind(this));
+  async mounted() {
+    // Vue ist fertig geladen
+    await this.loadplayer();
+    await this.loadtasks();
+    this.loaded = true;
   },
   methods: {
     ...experiencehelper,
@@ -78,7 +62,9 @@ const app = {
        */
       const newtask = { i: 'task-' + Date.now(), c: [], t: '', n: '', co: false, category: category ? category.value : 'gelb' };
       this.taskidtoselect = newtask.i;
-      this.save(newtask);
+      this.tasks.push(newtask)
+      this.selectedtask = newtask
+      await this.save()
     },
     checkchecklistitemcontent(checklistitem) {
       if (checklistitem.t.length < 1) {
@@ -88,74 +74,39 @@ const app = {
     async completetask(task) {
       this.player.experience += 10 + task.c.filter(c => !!c.c).length; // 10 je Task und 1 je abgeschlossenem ChecklistItem
       this.player.coins += 5 + task.c.filter(c => !!c.c).length; // 5 je Task und 1 je abgeschlossenem ChecklistItem
-      await deleteDoc(doc(getFirestore(), 'users', getAuth().currentUser.uid, 'tasks', task.i));
-      await this.saveplayer();
+      this.tasks.splice(this.tasks.findIndex(t => t === task), 1)
+      await this.save()
+      await this.saveplayer()
     },
     async deleteselectedtask() {
-      if (!window.confirm('Wirklich löschen?')) return;
-      await deleteDoc(doc(getFirestore(), 'users', getAuth().currentUser.uid, 'tasks', this.selectedtask.i));
-      this.selectedtask = undefined;
+      if (!window.confirm('Wirklich löschen?')) return
+      this.tasks.splice(this.tasks.findIndex(t => t === this.selectedtask), 1)
+      await this.save()
+      this.selectedtask = undefined
     },
-    // Wird jedesmal aufgerufen, wenn sich was am Anmeldezustand ändert
-    async handleauthstatechange(user) {
-      if (user) {
-        await this.loadplayer(user);
-        await this.loadtasks(user);
-        this.loaded = true;
-      } else {
-        // Benutzer ist noch nicht angemeldet, also Anmeldefenster anzeigen
-        // Müssen wir mit Redirect machen, weil Popup in PWA-App nicht funktioniert
-        await signInWithRedirect(getAuth(), this.googleAuthProvider);
-      }
-    },
-    handlekey(evt) {
+    async handlekey(evt) {
       if (evt.keyCode === 13) {
-        this.save(this.selectedtask);
-        this.selectedtask = undefined;
+        await this.save()
+        this.selectedtask = undefined
       }
     },
-    async loadplayer(user) {
-      // Siehe https://firebase.google.com/docs/firestore/query-data/get-data
-      // Jeder Benutzer hat ein eigenes Dokument mit der E-Mail-Adresse als Namen (Identifikator)
-      const docSnap = await getDoc(doc(getFirestore(), 'users', user.uid));
-      if (docSnap.exists()) {
-        this.player = docSnap.data();
-      } else {
-        // Benutzer existiert noch nicht, also einen anlegen und speichern
-        this.player = {
-          name: user.displayName,
-          experience: 0,
-          coins: 0
-        };
-        await setDoc(doc(getFirestore(), 'users', user.uid), this.player);
+    async loadplayer() {
+      this.player = JSON.parse(localStorage.getItem('player') || '{ "name": "Player 1", "experience": 0, "coins": 0 }')
+      // TODO: Avatar-Bild änderbar machen
+      // this.player.pictureurl = user.photoURL; // Bild als Avatar anzeigen
+    },
+    async loadtasks() {
+      this.tasks = JSON.parse(localStorage.getItem('tasks') || '[]')
+      for (const task of this.tasks) {
+        if (this.taskidtoselect && task.i === this.taskidtoselect) {
+          this.selectedtask = task;
+          this.taskidtoselect = undefined;
+        }
       }
-      this.player.pictureurl = user.photoURL; // Bild als Avatar anzeigen
+      this.finishedloading = true;
     },
-    async loadtasks(user) {
-      // Die Taskliste wird überwacht und live aktualsiert.
-      // Siehe https://firebase.google.com/docs/firestore/query-data/listen#listen_to_multiple_documents_in_a_collection
-      onSnapshot(query(collection(getFirestore(), 'users', user.uid, 'tasks')), (querySnapshot) => {
-        this.tasks = [];
-        querySnapshot.forEach(async (document) => {
-          const task = document.data();
-          this.tasks.push(task);
-          if (this.taskidtoselect && task.i === this.taskidtoselect) {
-            this.selectedtask = task;
-            this.taskidtoselect = undefined;
-          }
-        });
-        this.finishedloading = true;
-      });
-    },
-    async logout() {
-      this.googleAuthProvider.setCustomParameters({
-        prompt: 'select_account' // Damit wird beim Wieder-Einloggen das Account-Auswahlfenster angezeigt, damit man den Account wechseln kann
-      });
-      await signOut(getAuth());
-      // Das Wiederanmelden wird über handleauthstatechange geregelt
-    },
-    async save(task) {
-      await setDoc(doc(getFirestore(), 'users', getAuth().currentUser.uid, 'tasks', task.i), task);
+    async save() {
+      localStorage.setItem('tasks', JSON.stringify(this.tasks))
     },
     async saveplayer() {
       // Nur das in die Datenbank schreiben, was auch wirklich notwendig ist
@@ -165,7 +116,7 @@ const app = {
         experience: this.player.experience,
         coins: this.player.coins,
       };
-      await updateDoc(doc(getFirestore(), 'users', getAuth().currentUser.uid), playertosave);
+      localStorage.setItem('player', JSON.stringify(playertosave))
     },
     tasksforcategory(category) {
       return this.tasks.filter(t => t.category === category.value);
